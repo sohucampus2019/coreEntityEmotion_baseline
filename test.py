@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-# @author: He Xiao (hexiao214370@sohu-inc.com)
-# @date: 2019-03-29
+
 from joblib import load
 from train import Train
 import re
