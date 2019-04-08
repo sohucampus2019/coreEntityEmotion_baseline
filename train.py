@@ -5,10 +5,13 @@ import codecs
 import json
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import LinearSVC
+from sklearn.naive_bayes import MultinomialNB
 from sklearn.preprocessing import normalize
 from joblib import dump
 import re
+from scipy.sparse import vstack
+from tqdm import tqdm
 
 class Train():
     def __init__(self):
@@ -19,21 +22,25 @@ class Train():
         '''
         train model for coreEntity
         Baseline use entityDict for named entity recognition, you can use a more wise method.
-        Baseline use tfidf-score as feature, LR as classification model
+        Baseline use tfIdf score as feature and LR as classification model
         :return:
         '''
         # 1. train tfIdf as core entity score model
-        trainData = self.loadData('data/train.txt')
+        trainData = self.loadData('data/coreEntityEmotion_train.txt')
+
+        print("loading all ner corpus from train data...")
 
         nerCorpus = []
-        for news in trainData:
+        for news in tqdm(trainData):
             nerCorpus.append(' '.join(self.getEntity(news)))
 
-
+        print("fitting ner tfIdf model...")
         tfIdf = TfidfVectorizer()
         tfIdf.fit(nerCorpus)
         # 1.1 save tfIdf model
-        dump(tfIdf, 'models/tfIdf.joblib')
+        dump(tfIdf, 'models/nerTfIdf.joblib')
+
+
 
         # 2. train LR with tfIdf score as features
         isCoreX = []
@@ -51,6 +58,8 @@ class Train():
                     isCoreX.append([score])
                     isCoreY.append(0)
 
+        # 3. train LR model for coreEntity
+        print("training LR model for coreEntity...")
         clf = LogisticRegression(random_state=0, solver='lbfgs',
                                  multi_class='multinomial').fit(isCoreX, isCoreY)
         dump(clf, 'models/CoreEntityCLF.joblib')
@@ -58,15 +67,18 @@ class Train():
     def trainEmotion(self):
         '''
         train emotion model
-        Baseline use tfidf vector as feature, NaiveBayes as classfication model
+        Baseline use tfIdf vector as feature, linearSVC as classfication model
         :return:
         '''
-        trainData = self.loadData('data/train.txt')
+        trainData = self.loadData('data/coreEntityEmotion_train.txt')
 
         emotionX = []
         emotionY = []
 
-        for news in trainData:
+        print("loading emotion corpus from train data...")
+
+        # 1. get all related sentences to the entities
+        for news in tqdm(trainData):
 
             text = news['title'] + '\n' + news['content']
             entities = [x['entity'] for x in news['coreEntityEmotions']]
@@ -83,16 +95,32 @@ class Train():
 
             for entity, sents in entitySentsMap.items():
                 relatedText = ' '.join(sents)
-                emotionX.append(relatedText)
+                emotionX.append([relatedText])
                 emotionY.append(entityEmotionMap[entity])
 
+        # 2. train tf-idf model for emotion related words
+        emotionWordCorpus = []
+        for news in trainData:
+            emotionWordCorpus.append(' '.join(self.getWords(news)))
 
-        clf = GaussianNB()
+        print("fitting emotion tfIdf model...")
 
+        tfIdf = TfidfVectorizer()
+        tfIdf.fit(emotionWordCorpus)
+        dump(tfIdf, 'models/emotionTfIdf.joblib')
 
+        # 3. use naive bayes to train emotion classifiction
+        emotionX = vstack([tfIdf.transform(x) for x in emotionX]).toarray()
 
+        print("training emotion clf with linearSVC...")
 
+        print(emotionX.shape)
+        clf = MultinomialNB()
+        clf.fit(emotionX, emotionY)
 
+        print(clf.score(emotionX, emotionY))
+
+        dump(clf, 'models/emotionCLF.joblib')
 
     def getTfIdfScore(self, news, tfIdf):
         featureName = tfIdf.get_feature_names()
@@ -125,7 +153,7 @@ class Train():
         title = news['title']
         content = news['content']
 
-        words = jieba.cut(title + ' ' + content)
+        words = jieba.cut(title + '\t' + content)
 
         return list(words)
 
@@ -145,13 +173,12 @@ class Train():
     def loadData(self, filePath):
         f = codecs.open(filePath,'r', 'utf-8')
         data = []
-        for line in list(f.readlines())[0:10]:
+        for line in f.readlines():
             news = json.loads(line.strip())
             data.append(news)
         return data
 
-
-
 if __name__ == '__main__':
     trainer = Train()
+    trainer.trainCoreEntity()
     trainer.trainEmotion()
